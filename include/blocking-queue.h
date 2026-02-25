@@ -230,3 +230,61 @@ private:
 	LightweightSemaphore items_; // items available
 };
 
+template <class T>
+class ElasticBlockingPool {
+public:
+	using Ptr = std::unique_ptr<T>;
+
+	// maxCap = hard max number of buffers allowed to exist
+	// initial = how many to create immediately
+	ElasticBlockingPool(size_t maxCap, size_t initial)
+		: max_(maxCap),
+		  q_(maxCap)
+	{
+		if (initial > max_) initial = max_;
+		created_.store(0, std::memory_order_relaxed);
+
+		for (size_t i = 0; i < initial; ++i) {
+			q_.push(std::make_unique<T>());
+		}
+		created_.store(initial, std::memory_order_relaxed);
+	}
+
+	// Old name: pop() returns a buffer (blocks only if at max_ and none free)
+	Ptr pop() {
+		Ptr out;
+
+		// Fast path: try to reuse one
+		if (q_.try_pop(out))
+			return out;
+
+		// No free buffer available right now: try to grow, capped at max_
+		size_t c = created_.load(std::memory_order_relaxed);
+		while (c < max_) {
+			if (created_.compare_exchange_weak(
+					c, c + 1,
+					std::memory_order_acq_rel,
+					std::memory_order_relaxed)) {
+				// We "minted" a new buffer slot
+				return std::make_unique<T>();
+			}
+			// else c updated, retry
+		}
+
+		// At max and none free => block until one is returned
+		return q_.pop();
+	}
+
+	// Old name: push() returns buffer to pool
+	void push(Ptr p) {
+		q_.push(std::move(p));
+	}
+
+	size_t created() const { return created_.load(std::memory_order_relaxed); }
+	size_t max() const { return max_; }
+
+private:
+	const size_t max_;
+	BlockingQueue<Ptr> q_;            // your existing bounded ring wrapper
+	std::atomic<size_t> created_{0};  // how many buffers exist so far
+};
