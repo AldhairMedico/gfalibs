@@ -21,7 +21,7 @@
 
 void loadGenome(UserInput userInput, InSequences &inSequences) {
     
-    if (userInput.inSequence.empty()) {return;}
+    if (userInput.inSequence.empty() && userInput.pipeType == 'n') {return;}
     
     // stream read variable definition
     std::string firstLine;
