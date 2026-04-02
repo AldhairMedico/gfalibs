@@ -277,10 +277,9 @@ void ThreadPool<T>::notify_all() {
 inline void flushLogs() {
     
     std::unique_lock<std::mutex> lck(mtx);
-    for (auto it = logs.begin(); it != logs.end(); it++) {
-        it->print();
-        logs.erase(it--);
-    }
+    for (auto &log : logs)
+        log.print();
+    logs.clear();
 }
 
 template<class T>
