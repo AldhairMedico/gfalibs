@@ -2,6 +2,10 @@
 #define STREAM_OBJ_H
 
 #include <fstream>
+#include <memory>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
 #include "zlib.h"
 
 class membuf : public std::streambuf {
@@ -31,6 +35,8 @@ public:
     void openFile(std::string file);
     
     void wait();
+    
+    int underflow() override;
     
     int uflow() override;
     

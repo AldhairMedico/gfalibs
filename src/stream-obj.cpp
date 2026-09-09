@@ -30,64 +30,69 @@ void membuf::wait() {
 //    std::cout<<"R:read"<<std::endl;
 }
 
-int membuf::uflow() {
-//    std::cout<<"R:resetting buffer"<<std::endl;
+int membuf::underflow() {
+
+    if (this->gptr() < this->egptr()) // buffer still has data
+        return std::char_traits<char>::to_int_type(*this->gptr());
+
     {
-//        std::cout<<"R:waiting for decompressed buffer"<<std::endl;
         std::unique_lock<std::mutex> lck(semMtx);
         semaphore.wait(lck, [this] {
             return (decompressed1 && whichBuf) || (decompressed2 && !whichBuf) || eof;
         });
-    
-        if(decompressed1 && whichBuf) {
-//            std::cout<<"R:setting internal buffer to buffer 1"<<std::endl;
+
+        if (decompressed1 && whichBuf) {
             setg(bufContent1.get(), bufContent1.get(), bufContent1.get() + sizeof(char)*size1);
             decompressed1 = false;
             whichBuf = 0;
         }
-        
-        if (decompressed2 && !whichBuf){
-//            std::cout<<"R:setting internal buffer to buffer 2"<<std::endl;
+
+        if (decompressed2 && !whichBuf) {
             setg(bufContent2.get(), bufContent2.get(), bufContent2.get() + sizeof(char)*size2);
             decompressed2 = false;
             whichBuf = 1;
         }
     }
     semaphore.notify_one();
-	
-	if (this->gptr() < this->egptr()) {
-		typename std::char_traits<char>::int_type ch = std::char_traits<char>::to_int_type(*this->gptr()); // Read the character
-		this->gbump(1); // Move the read pointer forward
-		return ch;
-	}
-	
-	typename std::char_traits<char>::int_type ch = this->underflow();
-	
-	if (ch == std::char_traits<char>::eof()) {
-		if (decompressor != NULL && decompressor->joinable()) {
-			decompressor->join();
-			delete decompressor;
-			decompressor = NULL;
-		}
-		return ch;
-	}else{
-		return this->uflow();
-	}
+
+    if (this->gptr() < this->egptr())
+        return std::char_traits<char>::to_int_type(*this->gptr());
+
+    return std::char_traits<char>::eof();
 }
+
+
+int membuf::uflow() {
+
+    if (underflow() == std::char_traits<char>::eof()) {
+        if (decompressor != NULL && decompressor->joinable()) {
+            decompressor->join();
+            delete decompressor;
+            decompressor = NULL;
+        }
+        return std::char_traits<char>::eof();
+    }
+
+    std::char_traits<char>::int_type ch = std::char_traits<char>::to_int_type(*this->gptr());
+    this->gbump(1);
+    return ch;
+}
+
 
 bool membuf::decompressBuf() {
     
     *size = gzread(fi, bufContent, sizeof(char)*bufSize);
-    setg(bufContent, bufContent, bufContent + sizeof(char)**size);
-    start = true;
+    {
+        std::unique_lock<std::mutex> lck(semMtx);
+        setg(bufContent, bufContent, bufContent + sizeof(char)**size);
+        start = true;
+    }
     semaphore.notify_one();
-//    std::cout<<"D:extracted bases: "<<*size<<std::endl;
     
     while(*size==bufSize) {
          
         bufContent = (bufContent == bufContent1.get()) ? bufContent2.get() : bufContent1.get();
         size = (bufContent == bufContent1.get()) ? &size1 : &size2;
-//        std::cout<<"D:buffer swapped"<<std::endl;
         *size = gzread(fi, bufContent, sizeof(char)*bufSize);
         
         {
@@ -95,21 +100,23 @@ bool membuf::decompressBuf() {
             (bufContent == bufContent1.get()) ? decompressed1 = true : decompressed2 = true;
         }
         semaphore.notify_one();
-//        std::cout<<"D:extracted bases: "<<*size<<std::endl;
         {
-//            std::cout<<"D:waiting for buffer being read"<<std::endl;
             std::unique_lock<std::mutex> lck(semMtx);
-            semaphore.wait(lck, [this] {
-                return (bufContent == bufContent1.get()) ? !whichBuf : whichBuf;
+            semaphore.wait(lck, [this] { // eof lets an early close unblock this wait
+                return eof || ((bufContent == bufContent1.get()) ? !whichBuf : whichBuf);
             });
+            if (eof) break;
         }
     };
     
-    eof = true;
-    semaphore.notify_one();
-//    std::cout<<"D:decompression completed"<<std::endl;
+    {
+        std::unique_lock<std::mutex> lck(semMtx);
+        eof = true;
+    }
+    semaphore.notify_all();
     return eof;
 }
+
 
 void membuf::gzClose() {
 	{

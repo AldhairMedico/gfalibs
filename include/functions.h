@@ -143,6 +143,8 @@ static inline std::istream& getline(std::istream& is, std::string& str) {
         ++extr;
         if (i == '\n')
             break;
+        if (i == '\r') // skip CR so CRLF input does not inflate coordinates
+            continue;
         str.push_back(i);
         if (str.size() == str.max_size()) {
             err |= std::ios_base::failbit;
@@ -176,7 +178,7 @@ static inline std::istream& getline(std::istream& is, std::string& str, char dlm
         ++extr;
         if (i == dlm)
             break;
-        if(i == '\n')
+        if (i == '\n' || i == '\r') // skip line breaks so CRLF input does not inflate coordinates
             continue;
         str.push_back(i);
         if (str.size() == str.max_size()) {
